@@ -25,6 +25,27 @@ let scoreReviews = {
 let isMaster = false;
 let uiScale = null;
 let clockIntervalId = null;
+let audioContext = null;
+let songSourceNode = null;
+let songGainNode = null;
+let micSourceNode = null;
+let micGainNode = null;
+let masterGainNode = null;
+let compressorNode = null;
+let recordingDestinationNode = null;
+let mixRecorder = null;
+let mixRecorderChunks = [];
+let activeMicPeer = null;
+let activeMicSessionId = null;
+let remoteMicStream = null;
+let remoteMicTrackReceived = false;
+let micState = {
+  sessionId: null,
+  micConnected: false,
+  splashConnected: false,
+  connected: false,
+};
+const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
 
 // Browser detection
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -53,6 +74,326 @@ const formatTime = (seconds) => {
   const formattedSeconds = String(secs).padStart(2, "0");
   return `${formattedMinutes}:${formattedSeconds}`;
 }
+
+const clampVolume = (value) => Math.max(0, Math.min(1, value));
+
+const isAudioOutputReady = () =>
+  autoplayConfirmed &&
+  (!AudioContextCtor || !audioContext || audioContext.state === "running");
+
+const updateAudioOutputUi = () => {
+  const button = $("#audio-enable-button");
+  const state = $("#audio-output-state");
+  if (!button.length || !state.length) return;
+
+  const ready = isAudioOutputReady();
+  button.text(ready ? "Audio enabled" : "Enable audio");
+  button.toggleClass("is-warning", !ready);
+  button.toggleClass("is-success", ready);
+  state.text(ready ? "Ready" : "Locked");
+  state.toggleClass("is-success", ready);
+  state.toggleClass("is-dark", !ready);
+};
+
+const sanitizeFilename = (value) =>
+  (value || "pikaraoke-mix")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const getAudioContext = async () => {
+  if (!AudioContextCtor) {
+    return null;
+  }
+
+  if (!audioContext) {
+    const video = getVideoPlayer();
+    audioContext = new AudioContextCtor();
+    audioContext.onstatechange = updateAudioOutputUi;
+    songSourceNode = audioContext.createMediaElementSource(video);
+    songGainNode = audioContext.createGain();
+    micGainNode = audioContext.createGain();
+    masterGainNode = audioContext.createGain();
+    compressorNode = audioContext.createDynamicsCompressor();
+    recordingDestinationNode = audioContext.createMediaStreamDestination();
+
+    songSourceNode.connect(songGainNode);
+    songGainNode.connect(masterGainNode);
+    micGainNode.connect(masterGainNode);
+    masterGainNode.connect(compressorNode);
+    compressorNode.connect(audioContext.destination);
+    compressorNode.connect(recordingDestinationNode);
+
+    songGainNode.gain.value = clampVolume(volume);
+    micGainNode.gain.value = 1;
+    masterGainNode.gain.value = 1;
+  }
+
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+
+  updateAudioOutputUi();
+  return audioContext;
+};
+
+const setSongMixVolume = (nextVolume) => {
+  volume = clampVolume(nextVolume);
+  const video = getVideoPlayer();
+
+  if (songGainNode) {
+    songGainNode.gain.value = volume;
+    video.volume = 1;
+    return;
+  }
+
+  video.volume = volume;
+};
+
+const fadeSongMixVolume = (targetVolume, durationMs, onComplete = null) => {
+  if (!songGainNode) {
+    const video = getVideoPlayer();
+    $(video).animate({ volume: clampVolume(targetVolume) }, durationMs, onComplete || (() => {}));
+    return;
+  }
+
+  const startedAt = performance.now();
+  const from = songGainNode.gain.value;
+  const to = clampVolume(targetVolume);
+
+  const animate = (now) => {
+    const progress = Math.min(1, (now - startedAt) / durationMs);
+    songGainNode.gain.value = from + ((to - from) * progress);
+    if (progress < 1) {
+      requestAnimationFrame(animate);
+      return;
+    }
+    if (onComplete) onComplete();
+  };
+
+  requestAnimationFrame(animate);
+};
+
+const updateMicStatusUi = () => {
+  const statusText = $("#mic-connection-state");
+  if (!statusText.length) return;
+
+  if (!micState.micConnected) {
+    statusText.text("Phone mic: waiting");
+    return;
+  }
+
+  if (remoteMicTrackReceived && !isAudioOutputReady()) {
+    statusText.text("Phone mic: audio locked");
+    return;
+  }
+
+  if (remoteMicTrackReceived && isAudioOutputReady()) {
+    statusText.text("Phone mic: live");
+    return;
+  }
+
+  if (micState.connected || micState.splashConnected) {
+    statusText.text("Phone mic: connecting");
+    return;
+  }
+
+  statusText.text("Phone mic: ready");
+};
+
+const disconnectRemoteMic = () => {
+  const monitor = document.getElementById("phone-mic-monitor");
+  if (monitor) {
+    monitor.pause();
+    monitor.srcObject = null;
+  }
+  remoteMicStream = null;
+  remoteMicTrackReceived = false;
+  updateMicStatusUi();
+};
+
+const closeMicPeerConnection = () => {
+  if (!activeMicPeer) return;
+  activeMicPeer.onicecandidate = null;
+  activeMicPeer.ontrack = null;
+  activeMicPeer.onconnectionstatechange = null;
+  activeMicPeer.close();
+  activeMicPeer = null;
+};
+
+const attachRemoteMicStream = async (stream) => {
+  await getAudioContext();
+  disconnectRemoteMic();
+
+  remoteMicStream = stream;
+  remoteMicTrackReceived = true;
+  const monitor = document.getElementById("phone-mic-monitor");
+  if (!monitor) {
+    updateMicStatusUi();
+    return;
+  }
+
+  monitor.srcObject = stream;
+
+  if (!audioContext || !micGainNode) {
+    updateMicStatusUi();
+    return;
+  }
+
+  if (!micSourceNode) {
+    micSourceNode = audioContext.createMediaElementSource(monitor);
+    micSourceNode.connect(micGainNode);
+  }
+
+  try {
+    await monitor.play();
+  } catch (error) {
+    console.warn("Failed to start remote mic monitor", error);
+  }
+  updateMicStatusUi();
+};
+
+const getRecorderMimeType = () => {
+  if (typeof MediaRecorder === "undefined") {
+    return null;
+  }
+
+  const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  return preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+};
+
+const updateMixRecordingUi = () => {
+  const button = $("#mix-record-toggle");
+  const state = $("#mix-record-state");
+  const supported = typeof MediaRecorder !== "undefined" && !!recordingDestinationNode;
+  const active = mixRecorder && mixRecorder.state !== "inactive";
+
+  button.prop("disabled", !supported);
+  button.text(active ? "Stop recording" : "Record mix");
+  state.text(active ? "Recording" : "Idle");
+  state.toggleClass("is-danger", active);
+  state.toggleClass("is-dark", !active);
+};
+
+const finalizeMixRecording = () => {
+  if (!mixRecorderChunks.length) {
+    mixRecorder = null;
+    updateMixRecordingUi();
+    return;
+  }
+
+  const mimeType = mixRecorder?.mimeType || "audio/webm";
+  const blob = new Blob(mixRecorderChunks, { type: mimeType });
+  const extension = mimeType.includes("mp4") ? "m4a" : "webm";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `${sanitizeFilename(nowPlaying.now_playing)}-${stamp}.${extension}`;
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 10000);
+  flashNotification(`Saved mix: ${filename}`, "is-success");
+  mixRecorderChunks = [];
+  mixRecorder = null;
+  updateMixRecordingUi();
+};
+
+const startMixRecording = async () => {
+  await getAudioContext();
+  const mimeType = getRecorderMimeType();
+
+  if (!recordingDestinationNode || mimeType === null) {
+    flashNotification("Recording is not supported in this browser", "is-warning");
+    updateMixRecordingUi();
+    return;
+  }
+
+  mixRecorderChunks = [];
+  mixRecorder = mimeType
+    ? new MediaRecorder(recordingDestinationNode.stream, { mimeType })
+    : new MediaRecorder(recordingDestinationNode.stream);
+
+  mixRecorder.ondataavailable = ({ data }) => {
+    if (data && data.size > 0) {
+      mixRecorderChunks.push(data);
+    }
+  };
+  mixRecorder.onerror = (event) => {
+    console.warn("Mix recorder error", event);
+    mixRecorderChunks = [];
+    mixRecorder = null;
+    flashNotification("Mix recording failed", "is-danger");
+    updateMixRecordingUi();
+  };
+  mixRecorder.onstop = finalizeMixRecording;
+  mixRecorder.start(1000);
+  updateMixRecordingUi();
+};
+
+const stopMixRecording = () => {
+  if (mixRecorder && mixRecorder.state !== "inactive") {
+    mixRecorder.stop();
+  } else {
+    updateMixRecordingUi();
+  }
+};
+
+const toggleMixRecording = async () => {
+  const active = mixRecorder && mixRecorder.state !== "inactive";
+  if (active) {
+    stopMixRecording();
+    return;
+  }
+  await startMixRecording();
+};
+
+const startMicNegotiation = async (sessionId) => {
+  if (!isMaster || !sessionId) return;
+
+  try {
+    await getAudioContext();
+    closeMicPeerConnection();
+
+    activeMicSessionId = sessionId;
+    activeMicPeer = new RTCPeerConnection();
+    activeMicPeer.addTransceiver("audio", { direction: "recvonly" });
+
+    activeMicPeer.onicecandidate = ({ candidate }) => {
+      if (!candidate || !activeMicSessionId) return;
+      socket.emit("webrtc_ice_candidate", {
+        sessionId: activeMicSessionId,
+        candidate,
+      });
+    };
+
+    activeMicPeer.ontrack = ({ streams }) => {
+      if (streams && streams[0]) {
+        attachRemoteMicStream(streams[0]);
+      }
+    };
+
+    activeMicPeer.onconnectionstatechange = () => {
+      const state = activeMicPeer?.connectionState;
+      if (state === "failed" || state === "closed" || state === "disconnected") {
+        disconnectRemoteMic();
+      }
+    };
+
+    const offer = await activeMicPeer.createOffer();
+    await activeMicPeer.setLocalDescription(offer);
+    socket.emit("webrtc_offer", {
+      sessionId: activeMicSessionId,
+      description: activeMicPeer.localDescription,
+    });
+  } catch (error) {
+    console.warn("Failed to start phone mic negotiation", error);
+    activeMicSessionId = null;
+    closeMicPeerConnection();
+    disconnectRemoteMic();
+    flashNotification("Phone mic connection failed", "is-warning");
+  }
+};
 
 const testAutoplayCapability = async () => {
   // Test if autoplay with audio is allowed using a real video file
@@ -94,6 +435,18 @@ const testAutoplayCapability = async () => {
 const handleConfirmation = () => {
   $('#permissions-modal').removeClass('is-active');
   autoplayConfirmed = true;
+  getAudioContext().then(() => {
+    const monitor = document.getElementById("phone-mic-monitor");
+    if (monitor?.srcObject) {
+      monitor.play().catch((error) => {
+        console.warn("Failed to resume remote mic monitor after confirmation", error);
+      });
+    }
+    setSongMixVolume(volume);
+    updateMixRecordingUi();
+    updateAudioOutputUi();
+    updateMicStatusUi();
+  });
   updateBackgroundMediaState(true);
   loadNowPlaying();
 };
@@ -103,6 +456,7 @@ const hideVideo = () => {
 }
 
 const endSong = async (reason = null, showScore = false) => {
+  stopMixRecording();
   if (showScore && !PikaraokeConfig.disableScore) {
     isScoreShown = true;
     await startScore("/static/");
@@ -336,8 +690,9 @@ const handleNowPlayingUpdate = (np) => {
 
     video.load();
     if (volume !== np.volume) {
-      volume = np.volume;
-      video.volume = volume;
+      setSongMixVolume(np.volume);
+    } else {
+      setSongMixVolume(volume);
     }
 
     const duration = $("#duration");
@@ -413,11 +768,13 @@ const setupOverlayMenus = () => {
   triggerInactivity();
   $('#menu a').click(function () {
     if (showMenu) {
+      $('#menu-background').hide();
       $('#menu-container').hide();
       $('#menu-container iframe').attr('src', '');
       showMenu = false;
     } else {
       setUserCookie();
+      $('#menu-background').show();
       $("#menu-container").show();
       $("#menu-container iframe").attr("src", "/");
       showMenu = true;
@@ -569,30 +926,34 @@ const setupSocketEvents = () => {
   });
   socket.on('pause', () => {
     const video = getVideoPlayer();
-    const currVolume = video.volume;
     if (!video.paused) {
-      $(video).animate({ volume: 0 }, 1000, () => {
+      const currentMixVolume = songGainNode ? songGainNode.gain.value : video.volume;
+      fadeSongMixVolume(0, 1000, () => {
         video.pause();
-        video.volume = currVolume;
+        setSongMixVolume(currentMixVolume);
       });
     }
   });
   socket.on('play', () => {
     const video = getVideoPlayer();
-    const currVolume = video.volume;
     if (video.paused) {
       video.play();
-      video.volume = 0;
-      $(video).animate({ volume: currVolume }, 1000);
+      if (songGainNode) {
+        songGainNode.gain.value = 0;
+      } else {
+        video.volume = 0;
+      }
+      fadeSongMixVolume(volume, 1000);
     }
   });
   socket.on('skip', (reason) => {
     const video = getVideoPlayer();
-    const currVolume = video.volume;
+    stopMixRecording();
     if (isMediaPlaying(video)) {
-      $(video).animate({ volume: 0 }, 1000, () => {
+      const currentMixVolume = songGainNode ? songGainNode.gain.value : video.volume;
+      fadeSongMixVolume(0, 1000, () => {
         video.pause();
-        video.volume = currVolume;
+        setSongMixVolume(currentMixVolume);
         hideVideo();
       });
     } else {
@@ -601,13 +962,12 @@ const setupSocketEvents = () => {
     }
   });
   socket.on('volume', (val) => {
-    const video = getVideoPlayer();
     if (val === "up") {
-      video.volume = Math.min(1, video.volume + 0.1);
+      setSongMixVolume(volume + 0.1);
     } else if (val === "down") {
-      video.volume = Math.max(0, video.volume - 0.1);
+      setSongMixVolume(volume - 0.1);
     } else {
-      video.volume = val;
+      setSongMixVolume(val);
     }
   });
   socket.on('restart', () => {
@@ -625,6 +985,44 @@ const setupSocketEvents = () => {
     }
   });
   socket.on("now_playing", handleNowPlayingUpdate);
+  socket.on("mic_session_available", async (payload) => {
+    if (!isMaster) return;
+    await startMicNegotiation(payload.sessionId);
+  });
+  socket.on("mic_state", (payload) => {
+    micState = payload;
+    if (!payload.micConnected) {
+      activeMicSessionId = null;
+      closeMicPeerConnection();
+      disconnectRemoteMic();
+    } else if (payload.sessionId) {
+      activeMicSessionId = payload.sessionId;
+    }
+    updateMicStatusUi();
+  });
+  socket.on("webrtc_answer", async (payload) => {
+    if (!activeMicPeer || payload.sessionId !== activeMicSessionId || !payload.description) {
+      return;
+    }
+    try {
+      await activeMicPeer.setRemoteDescription(payload.description);
+    } catch (error) {
+      console.warn("Failed to apply phone mic answer", error);
+      closeMicPeerConnection();
+      disconnectRemoteMic();
+      flashNotification("Phone mic connection failed", "is-warning");
+    }
+  });
+  socket.on("webrtc_ice_candidate", async (payload) => {
+    if (!activeMicPeer || payload.sessionId !== activeMicSessionId || !payload.candidate) {
+      return;
+    }
+    try {
+      await activeMicPeer.addIceCandidate(payload.candidate);
+    } catch (error) {
+      console.warn("Failed to add remote ICE candidate", error);
+    }
+  });
   socket.on("preferences_update", applyPreferenceUpdate);
   socket.on("preferences_reset", applyPreferencesReset);
   socket.on("score_phrases_update", (phrases) => { scoreReviews = phrases; });
@@ -695,6 +1093,11 @@ $(function () {
   setupOverlayMenus();
   setupVideoPlayer();
   setupBackgroundMusicPlayer();
+  $("#audio-enable-button").on("click", handleConfirmation);
+  $("#mix-record-toggle").on("click", toggleMixRecording);
+  updateMicStatusUi();
+  updateMixRecordingUi();
+  updateAudioOutputUi();
 
   // Handle browser compatibility
   handleUnsupportedBrowser();

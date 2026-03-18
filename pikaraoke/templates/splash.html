@@ -65,6 +65,19 @@
       {% for line in hostap_info %}{{ line }}<br />{% endfor %}
     </div>
   </div>
+  <div id="mic-status-panel" class="stroke has-text-white is-size-7 mt-3">
+    <div id="mic-connection-state">{% trans %}Phone mic: waiting{% endtrans %}</div>
+    <div id="mix-record-controls" class="mt-2">
+      <button id="audio-enable-button" class="button is-small is-warning">
+        {% trans %}Enable audio{% endtrans %}
+      </button>
+      <span id="audio-output-state" class="tag is-dark">{% trans %}Locked{% endtrans %}</span>
+      <button id="mix-record-toggle" class="button is-small is-dark">
+        {% trans %}Record mix{% endtrans %}
+      </button>
+      <span id="mix-record-state" class="tag is-dark">{% trans %}Idle{% endtrans %}</span>
+    </div>
+  </div>
 </div>
 
 <div id="bottom-container" class="overlay">
@@ -165,7 +178,7 @@
 
   <div id="menu-background" class="overlay"></div>
    <div id="menu-container" class="">
-     <iframe></iframe>
+     <iframe allow="microphone"></iframe>
    </div>
 
 
@@ -191,6 +204,8 @@
 <audio id="background-music">
   <source src="" type="audio/mpeg">
 </audio>
+
+<audio id="phone-mic-monitor" autoplay playsinline webkit-playsinline style="display: none;"></audio>
 
 <audio id="score-drums">
 	<source
@@ -283,6 +298,7 @@
   }
   #menu-background {
     bottom: 0;
+    display: none;
     left: 0;
     position: absolute;
     right: 0;
@@ -302,6 +318,15 @@
     font-weight: bold;
     line-height: 1;
     margin-bottom: 10px;
+  }
+  #mic-status-panel {
+    max-width: 260px;
+  }
+  #mix-record-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
   }
   #menu-container {
     position: absolute;
