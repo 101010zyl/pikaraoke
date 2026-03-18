@@ -195,6 +195,23 @@
 <p id="up-next" class="has-text-warning"></p>
 <hr />
 
+<div class="box has-background-black-bis">
+	<h4>{% trans %}Phone Microphone{% endtrans %}</h4>
+	<p>
+		{% trans %}Open the microphone page on a phone to send live vocals to the splash screen mix.{% endtrans %}
+	</p>
+	{% if mic_requires_https %}
+	<p class="has-text-warning">
+		{% trans %}Phone microphone capture needs HTTPS (or localhost). The current shared URL is not secure yet.{% endtrans %}
+	</p>
+	<p class="is-size-7">{{ preferred_mic_url }}</p>
+	{% endif %}
+		<a class="button is-link is-light" href="{{ url_for('mic.mic_page') }}">
+		<i class="icon icon-mic-1"></i>&nbsp;
+		<span>{% trans %}Open Mic Page{% endtrans %}</span>
+	</a>
+</div>
+
 {% if admin %}
 <div class="has-background-black-bis box control-box" style="max-width: 500px; display: none">
 	{# MSG: Title of the box with controls such as pause and skip. #}

@@ -1,0 +1,101 @@
+{% extends 'base.html' %} {% block scripts %}
+<script>
+  window.MicConfig = {
+    preferredMicUrl: {{ preferred_mic_url|tojson }},
+    secureServerUrl: {{ secure_server_url|tojson }},
+  };
+</script>
+<script src="{{ url_for('static', filename='js/mic.js') }}"></script>
+<style>
+  .meter-shell {
+    width: 100%;
+    height: 18px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #37c871 0%, #ffdd57 60%, #ff3860 100%);
+    transition: width 0.08s linear;
+  }
+  .mic-status-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .mic-settings {
+    display: grid;
+    gap: 10px;
+  }
+  @media screen and (min-width: 769px) {
+    .mic-settings {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+</style>
+{% endblock %} {% block header %}
+<h1>{% trans %}Phone Mic{% endtrans %}</h1>
+{% endblock %} {% block content %}
+<div data-mic-page="true">
+<div id="mic-insecure-warning" class="notification is-warning" style="display: none">
+  <p>{% trans %}This page is not running in a secure context, so the browser will block microphone access.{% endtrans %}</p>
+  <p class="mt-2">{% trans %}Open the secure URL below if you have enabled HTTPS for PiKaraoke.{% endtrans %}</p>
+  <p class="mt-2">
+    <a id="mic-secure-link" href="#"></a>
+  </p>
+</div>
+
+<div id="mic-embed-warning" class="notification is-warning" style="display: none">
+  <p>{% trans %}This page is embedded inside another page. If your browser still blocks microphone access, open the mic page directly in its own tab.{% endtrans %}</p>
+</div>
+
+<div class="box has-background-black-bis">
+  <div class="mic-status-row">
+    <span class="tag is-info" id="mic-status-pill">{% trans %}Idle{% endtrans %}</span>
+    <span class="is-size-7" id="mic-session-label"></span>
+  </div>
+  <p id="mic-status-detail" class="is-size-7 mt-2"></p>
+
+  <div class="mt-4">
+    <p class="mb-2">{% trans %}Input level{% endtrans %}</p>
+    <div class="meter-shell">
+      <div id="mic-level-fill" class="meter-fill"></div>
+    </div>
+  </div>
+
+  <div class="buttons mt-5">
+    <button id="mic-start-button" class="button is-success">{% trans %}Start Mic{% endtrans %}</button>
+    <button id="mic-mute-button" class="button is-warning" disabled>{% trans %}Mute{% endtrans %}</button>
+    <button id="mic-disconnect-button" class="button is-danger is-light" disabled>{% trans %}Disconnect{% endtrans %}</button>
+  </div>
+</div>
+
+<div class="box">
+  <h4>{% trans %}Capture Options{% endtrans %}</h4>
+  <div class="mic-settings mt-3">
+    <label class="checkbox">
+      <input id="mic-echo-cancel" type="checkbox" checked />
+      {% trans %}Echo cancellation{% endtrans %}
+    </label>
+    <label class="checkbox">
+      <input id="mic-noise-suppress" type="checkbox" checked />
+      {% trans %}Noise suppression{% endtrans %}
+    </label>
+    <label class="checkbox">
+      <input id="mic-auto-gain" type="checkbox" checked />
+      {% trans %}Auto gain control{% endtrans %}
+    </label>
+  </div>
+</div>
+
+<p class="is-size-7">
+  {% trans %}Keep this page open while singing. The splash screen browser will mix the phone microphone with the current song audio.{% endtrans %}
+</p>
+</div>
+<script>
+  window.PikaraokeMicPage?.init();
+</script>
+{% endblock %}

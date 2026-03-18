@@ -39,6 +39,7 @@ from pikaraoke.routes.home import home_bp
 from pikaraoke.routes.images import images_bp
 from pikaraoke.routes.info import info_bp
 from pikaraoke.routes.metadata_api import metadata_bp
+from pikaraoke.routes.mic import mic_bp
 from pikaraoke.routes.now_playing import nowplaying_bp
 from pikaraoke.routes.preferences import preferences_bp
 from pikaraoke.routes.queue import queue_bp
@@ -96,6 +97,7 @@ _api_blueprints = [
 _internal_blueprints = [
     home_bp,
     info_bp,
+    mic_bp,
     splash_bp,
     batch_song_renamer_bp,
 ]

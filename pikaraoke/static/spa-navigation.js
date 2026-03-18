@@ -410,6 +410,8 @@
             $('#queue').addClass('is-active');
         } else if (path === '/search') {
             $('#search').addClass('is-active');
+        } else if (path === '/mic') {
+            $('#mic').addClass('is-active');
         } else if (path === '/browse' || path.startsWith('/browse')) {
             $('#browse').addClass('is-active');
         } else if (path === '/info') {
