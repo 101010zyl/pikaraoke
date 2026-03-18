@@ -133,6 +133,9 @@ class Browser:
                 ]
             )
 
+            if self.splash_url.startswith("https://"):
+                cmd.append("--ignore-certificate-errors")
+
             if self.external_monitor:
                 cmd.append("--window-position=2000,0")
             else:

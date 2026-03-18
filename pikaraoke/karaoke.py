@@ -97,6 +97,7 @@ class Karaoke:
         preferred_language: str | None = None,
         socketio=None,
         streaming_format: str = "hls",
+        url_scheme: str = "http",
         url: str | None = None,
         youtubedl_proxy: str | None = None,
         # Preference parameters (defaults from PreferenceManager.DEFAULTS)
@@ -156,6 +157,7 @@ class Karaoke:
             additional_ytdl_args: Additional yt-dlp command arguments.
             socketio: SocketIO instance for real-time event emission.
             preferred_language: Language code for UI (e.g., 'en', 'de_DE').
+            url_scheme: URL scheme for externally shared links ('http' or 'https').
         """
         logging.basicConfig(
             format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -191,6 +193,7 @@ class Karaoke:
         self.bg_video_path = self.default_bg_video_path if bg_video_path is None else bg_video_path
         self.streaming_format = streaming_format
         self.socketio = socketio
+        self.url_scheme = url_scheme
         self.url_override = url
         self.url = self.get_url()
 
@@ -292,9 +295,9 @@ class Karaoke:
             url = self.url_override
         else:
             if self.prefer_hostname:
-                url = f"http://{socket.getfqdn().lower()}:{self.port}"
+                url = f"{self.url_scheme}://{socket.getfqdn().lower()}:{self.port}"
             else:
-                url = f"http://{self.ip}:{self.port}"
+                url = f"{self.url_scheme}://{self.ip}:{self.port}"
         return url
 
     def log_settings_to_debug(self) -> None:

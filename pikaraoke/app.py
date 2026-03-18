@@ -7,6 +7,7 @@ monkey.patch_all()
 import logging
 import os
 import sys
+import traceback
 from urllib.parse import quote
 
 import flask_babel
@@ -106,6 +107,43 @@ for bp in _internal_blueprints:
     app.register_blueprint(bp)
 
 
+class _TLSNoiseFilter(logging.Filter):
+    """Suppress noisy handshake-abort logs from clients rejecting local certs."""
+
+    _NOISY_MARKERS = (
+        "SSLV3_ALERT_CERTIFICATE_UNKNOWN",
+        "UNEXPECTED_EOF_WHILE_READING",
+        "SSLEOFError",
+        "failed with SSLError",
+        "failed with SSLEOFError",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        exc_info = record.exc_info
+        if exc_info:
+            if not isinstance(exc_info, tuple):
+                exc_info = sys.exc_info()
+            if exc_info and all(exc_info):
+                message = f"{message}\n{''.join(traceback.format_exception(*exc_info))}"
+        return not any(marker in message for marker in self._NOISY_MARKERS)
+
+
+def _build_server_error_logger() -> logging.Logger:
+    """Create a logger for gevent's server-level errors with TLS noise filtered."""
+    logger = logging.getLogger("pikaraoke.wsgi")
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
+
+    root_logger = logging.getLogger()
+    if not logger.handlers:
+        for handler in root_logger.handlers:
+            logger.addHandler(handler)
+    if not any(isinstance(existing, _TLSNoiseFilter) for existing in logger.filters):
+        logger.addFilter(_TLSNoiseFilter())
+    return logger
+
+
 def get_locale() -> str | None:
     """Select the language to display based on user preference or Accept-Language header.
 
@@ -199,6 +237,7 @@ def main() -> None:
         config_file_path=args.config_file_path,
         cdg_pixel_scaling=args.cdg_pixel_scaling,
         streaming_format=args.streaming_format,
+        url_scheme="https" if args.ssl_certfile and args.ssl_keyfile else "http",
         additional_ytdl_args=getattr(args, "ytdl_args", None),
         socketio=socketio,
         preferred_language=args.preferred_language,
@@ -231,7 +270,19 @@ def main() -> None:
 
     spawn(upgrade_youtubedl, log_failures_as_warning=False, log_attempts=False)
 
-    server = WSGIServer(("0.0.0.0", int(args.port)), app, log=None, error_log=logging.getLogger())
+    server_options = {"log": None, "error_log": _build_server_error_logger()}
+    if args.ssl_certfile and args.ssl_keyfile:
+        server_options["certfile"] = args.ssl_certfile
+        server_options["keyfile"] = args.ssl_keyfile
+        logging.info("HTTPS enabled for PiKaraoke web server")
+        if not args.url:
+            logging.warning(
+                "HTTPS is enabled but no --url override was supplied. If your certificate "
+                "was issued for a hostname instead of this LAN IP, open PiKaraoke with "
+                "--url https://<trusted-hostname>:<port>."
+            )
+
+    server = WSGIServer(("0.0.0.0", int(args.port)), app, **server_options)
     server.start()
 
     # Handle sigterm, apparently cherrypy won't shut down without explicit handling

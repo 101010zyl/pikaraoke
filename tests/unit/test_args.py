@@ -1,8 +1,11 @@
 """Unit tests for args module."""
 
+import os
+import sys
+
 import pytest
 
-from pikaraoke.lib.args import arg_path_parse, parse_volume
+from pikaraoke.lib.args import arg_path_parse, parse_pikaraoke_args, parse_volume
 
 
 class TestArgPathParse:
@@ -75,3 +78,33 @@ class TestParseVolume:
         """Test that decimal precision is preserved."""
         result = parse_volume("0.333", "test volume")
         assert result == 0.333
+
+
+class TestParsePikaraokeArgs:
+    """Tests for end-to-end CLI parsing."""
+
+    def test_ssl_paths_are_expanded(self, monkeypatch):
+        """SSL key/cert paths should be parsed like other filesystem args."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "pikaraoke",
+                "--ssl-certfile",
+                "~/cert.pem",
+                "--ssl-keyfile",
+                "~/key.pem",
+            ],
+        )
+
+        args = parse_pikaraoke_args()
+
+        assert args.ssl_certfile == os.path.expanduser("~/cert.pem")
+        assert args.ssl_keyfile == os.path.expanduser("~/key.pem")
+
+    def test_ssl_paths_require_both_files(self, monkeypatch):
+        """Supplying only one TLS file should fail validation."""
+        monkeypatch.setattr(sys, "argv", ["pikaraoke", "--ssl-certfile", "~/cert.pem"])
+
+        with pytest.raises(SystemExit):
+            parse_pikaraoke_args()

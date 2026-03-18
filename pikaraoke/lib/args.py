@@ -134,6 +134,20 @@ def parse_pikaraoke_args() -> argparse.Namespace:
         required=False,
     )
     parser.add_argument(
+        "--ssl-certfile",
+        nargs="+",
+        help="Path to a TLS certificate file (PEM). Requires --ssl-keyfile and serves PiKaraoke over HTTPS.",
+        default=None,
+        required=False,
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        nargs="+",
+        help="Path to a TLS private key file (PEM). Requires --ssl-certfile and serves PiKaraoke over HTTPS.",
+        default=None,
+        required=False,
+    )
+    parser.add_argument(
         "--window-size",
         help="Desired window geometry in pixels for headed mode, specified as width,height (Example: --window-size 800,600). Only works on Chromium browsers. Disables kiosk fullscreen mode. This can be used to open a windowed mode splash screen and move it to an external monitor where it can be fullscreened from the menu or a keyboard shortcut (F11 key, or control+cmd+f on Mac).",
         default=0,
@@ -319,6 +333,9 @@ def parse_pikaraoke_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
+    if bool(args.ssl_certfile) != bool(args.ssl_keyfile):
+        parser.error("--ssl-certfile and --ssl-keyfile must be provided together")
+
     # Additional sanitization of args (only process if provided)
     if args.volume is not None:
         args.volume = parse_volume(args.volume, "Volume")
@@ -330,6 +347,8 @@ def parse_pikaraoke_args() -> argparse.Namespace:
     logo_path = arg_path_parse(args.logo_path)
     bg_music_path = arg_path_parse(args.bg_music_path)
     bg_video_path = arg_path_parse(args.bg_video_path)
+    ssl_certfile = arg_path_parse(args.ssl_certfile)
+    ssl_keyfile = arg_path_parse(args.ssl_keyfile)
 
     if args.dolphly:
         logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "images", "dolphly.png")
@@ -346,5 +365,7 @@ def parse_pikaraoke_args() -> argparse.Namespace:
     args.bg_music_path = bg_music_path
     args.bg_video_path = bg_video_path
     args.download_path = dl_path
+    args.ssl_certfile = os.path.expanduser(ssl_certfile) if ssl_certfile else None
+    args.ssl_keyfile = os.path.expanduser(ssl_keyfile) if ssl_keyfile else None
 
     return args
