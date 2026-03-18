@@ -62,14 +62,23 @@ def get_youtube_id_from_url(url: str) -> str | None:
         return None
 
 
-def upgrade_youtubedl() -> str:
+def upgrade_youtubedl(
+    log_failures_as_warning: bool = True,
+    log_attempts: bool = True,
+) -> str:
     """Upgrade yt-dlp to the latest version.
 
     Attempts self-upgrade first, then falls back to pip if needed.
 
+    Args:
+        log_failures_as_warning: Whether failures should be shown as warnings.
+        log_attempts: Whether background upgrade attempts should log at info level.
+
     Returns:
         The new version string after upgrade.
     """
+    log_failure = logging.warning if log_failures_as_warning else logging.debug
+    log_attempt = logging.info if log_attempts else logging.debug
     try:
         output = (
             subprocess.check_output(yt_dlp_cmd + ["-U"], stderr=subprocess.STDOUT)
@@ -79,7 +88,7 @@ def upgrade_youtubedl() -> str:
     except subprocess.CalledProcessError as e:
         output = e.output.decode("utf8")
     except (FileNotFoundError, PermissionError) as e:
-        logging.warning(f"Could not run yt-dlp for upgrade: {e}")
+        log_failure(f"Could not run yt-dlp for upgrade: {e}")
         return get_youtubedl_version()
 
     # Check if already up to date
@@ -96,17 +105,17 @@ def upgrade_youtubedl() -> str:
             pip_cmd.append("--break-system-packages")
 
         try:
-            logging.info(f"yt-dlp is outdated! Attempting upgrade via {pip_cmd}...")
+            log_attempt(f"yt-dlp is outdated! Attempting upgrade via {pip_cmd}...")
             subprocess.check_output(pip_cmd, stderr=subprocess.STDOUT)
             upgrade_success = True
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logging.error(f"Failed to upgrade yt-dlp using pip: {e}")
+            log_failure(f"Failed to upgrade yt-dlp using pip: {e}")
 
     youtubedl_version = get_youtubedl_version()
     if upgrade_success:
         logging.info(f"Done. Installed version: {youtubedl_version}")
     else:
-        logging.error("Failed to upgrade yt-dlp.")
+        log_failure("Failed to upgrade yt-dlp.")
     return youtubedl_version
 
 

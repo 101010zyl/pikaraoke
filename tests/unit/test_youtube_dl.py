@@ -262,3 +262,21 @@ class TestUpgradeYoutubedl:
             result = upgrade_youtubedl()
             assert result == "2024.01.01"
             mock_version.assert_called_once_with()
+
+    @patch("pikaraoke.lib.youtube_dl.get_youtubedl_version", return_value="2024.01.01")
+    def test_background_mode_suppresses_warning_logs(self, mock_version):
+        """Test that startup upgrade checks do not emit warning logs on failure."""
+        error = subprocess.CalledProcessError(1, "yt-dlp", b"temporary network error")
+        error.output = b"temporary network error"
+
+        with patch("subprocess.check_output", side_effect=error), patch(
+            "logging.warning"
+        ) as mock_warning, patch("logging.debug") as mock_debug:
+            result = upgrade_youtubedl(
+                log_failures_as_warning=False,
+                log_attempts=False,
+            )
+
+            assert result == "2024.01.01"
+            mock_warning.assert_not_called()
+            mock_debug.assert_called()

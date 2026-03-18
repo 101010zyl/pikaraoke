@@ -229,7 +229,7 @@ def main() -> None:
     app.jinja_env.globals.update(filename_from_path=SongManager.filename_from_path)
     app.jinja_env.globals.update(url_escape=quote)
 
-    spawn(upgrade_youtubedl)
+    spawn(upgrade_youtubedl, log_failures_as_warning=False, log_attempts=False)
 
     server = WSGIServer(("0.0.0.0", int(args.port)), app, log=None, error_log=logging.getLogger())
     server.start()
